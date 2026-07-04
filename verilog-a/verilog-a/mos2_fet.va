@@ -1,0 +1,132 @@
+`include "constants.vams"
+`include "disciplines.vams"
+
+module mos2_fet (d, g, s, b);
+
+    inout  d, g, s, b;
+    electrical d, g, s, b;
+
+    parameter real L          = 500e-9  from (0:inf);
+    parameter real W          = 1e-6    from (0:inf);
+    parameter real mu0        = 185e-4  from (0:inf);
+    parameter real Vg0        = -1.75;
+    parameter real alpha      = 4.2     from (1:inf);
+    parameter real vsat       = 1.55e4  from (0:inf);
+    parameter real nu         = 1.45    from (0:inf);
+    parameter real m_sat      = 7.4     from (1:inf);
+    parameter real lambda_clm = 0.003;
+    parameter real DIBL_coeff = 0.0;
+    parameter real TNOM       = 300.15  from (0:inf);
+    parameter real Ct         = 19.57   from (0:inf);
+    parameter real Cdq        = 0.05    from (0:inf);
+    parameter real Vnorm      = 1.1;
+    parameter real Vmin       = 0.25;
+    parameter real Verr       = 0.08;
+
+    real Vgs, Vds, Vbs;
+    real Vth_T;
+    real Vov, Vshift, mueff;
+    real Vdsat_raw, Vdsat, Vds_eff;
+    real Qs, Qd;
+    real I_charge, EsatL, vel_factor, clm_factor;
+    real Ids_val;
+
+    analog function real lambertW0;
+        input z;
+        real  z;
+
+        real w, ew, f, fp, fpp, dw;
+        integer n;
+
+        begin
+            if (z <= 0.0) begin
+                w = 0.0;
+            end else if (z < 1e-6) begin
+                w = z;
+            end else if (z < 0.3679) begin
+                w = z * (1.0 - z * (1.0 - 1.5*z));
+            end else if (z < 3.0) begin
+                w = ln(1.0 + z);
+            end else begin
+                w = ln(z) - ln(ln(z) + 1e-30);
+            end
+
+            for (n = 0; n < 15; n = n + 1) begin
+                ew  = exp(w);
+                f   = w * ew - z;
+                fp  = ew * (w + 1.0);
+                fpp = ew * (w + 2.0);
+                dw  = f / (fp - 0.5 * f * fpp / (fp + 1e-30));
+                w   = w - dw;
+                if ((dw > -1e-12) && (dw < 1e-12))
+                    n = 100;
+            end
+            lambertW0 = w;
+        end
+    endfunction
+
+    analog function real chargeQ;
+        input Vg_f, Vg0_f, alpha_f, Vds_f, Vx_f, DIBL_f, Vth_f;
+        real  Vg_f, Vg0_f, alpha_f, Vds_f, Vx_f, DIBL_f, Vth_f;
+
+        real arg, z;
+        begin
+            arg = (Vg_f - Vg0_f + DIBL_f * Vds_f - Vx_f)
+                  / (alpha_f * Vth_f);
+
+            if (arg >  500.0) arg =  500.0;
+            if (arg < -500.0) arg = -500.0;
+
+            z = (Cdq / Ct) * exp(arg);
+            chargeQ = Ct * Vth_f * lambertW0(z);
+        end
+    endfunction
+
+    analog begin
+
+        Vth_T = `P_K * $temperature / `P_Q;
+
+        Vgs = V(g, s);
+        Vds = V(d, s);
+        Vbs = V(b, s);
+
+        Vshift = Vgs - (Vg0 - DIBL_coeff * Vds);
+
+        Vov = (Vmin / 2.0) * (
+                (1.0 + Vshift / Vmin) +
+                sqrt(Verr*Verr + (Vshift/Vmin - 1.0)*(Vshift/Vmin - 1.0))
+              );
+
+        mueff = mu0 / (1.0 + pow(Vov / Vnorm, nu));
+
+        Vdsat_raw = (Vov * (2.0 * vsat * L / (mueff + 1e-30)))
+                  / (Vov + 2.0 * vsat * L / (mueff + 1e-30) + 1e-30);
+
+        Vdsat = sqrt(Vdsat_raw * Vdsat_raw + 1e-6);
+
+        Vds_eff = Vds / pow(1.0 + pow(Vds / (Vdsat + 1e-30), m_sat),
+                            1.0 / m_sat);
+
+        Qs = chargeQ(Vgs, Vg0, alpha, Vds, 0.0,      DIBL_coeff, Vth_T);
+        Qd = chargeQ(Vgs, Vg0, alpha, Vds, Vds_eff,  DIBL_coeff, Vth_T);
+
+        I_charge = (Qs*Qs - Qd*Qd) / (2.0 * Ct)
+                 + Vth_T * (Qs - Qd);
+
+        EsatL      = (vsat / (mueff + 1e-30)) * L;
+        vel_factor = 1.0 / (1.0 + Vds_eff / (EsatL + 1e-30));
+
+        clm_factor = 1.0 + lambda_clm * Vds;
+
+        Ids_val = (W * mueff / (L + 1e-30))
+                * I_charge * vel_factor * clm_factor;
+
+        if (Ids_val < 1e-20) Ids_val = 1e-20;
+
+        I(d, s) <+ Ids_val;
+        I(g, s) <+ 0.0;
+        I(b, s) <+ 0.0;
+
+    end
+
+endmodule

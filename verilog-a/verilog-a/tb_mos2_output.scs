@@ -1,0 +1,36 @@
+simulator lang=spectre
+
+ahdl_include "mos2_fet.vams"
+
+global 0
+options option scale=1
+
+Vgs  (g  0)  vsource  dc=Vgs_val  type=dc
+Vds  (d  0)  vsource  dc=0        type=dc
+
+M1 (d g 0 0) mos2_fet
++   L=500e-9
++   W=1e-6
++   mu0=185e-4
++   Vg0=-1.75
++   alpha=4.2
++   vsat=1.55e4
++   nu=1.45
++   m_sat=7.4
++   lambda_clm=0.003
++   DIBL_coeff=0.0
+
+parameters Vgs_val=0.1
+
+output_500nm  dc  dev=Vds  start=0  stop=2.5  step=0.01 \
+    paramset=vgs_sweep  save=selected
+
+vgs_sweep  paramset {
+    Vgs_val
+    0.1
+    0.4
+    0.8
+    1.0
+}
+
+save  Vds:p  M1:d
